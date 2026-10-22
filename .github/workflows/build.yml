@@ -1,4 +1,3 @@
-
 name: Build AIVA APK
 
 on:
@@ -14,22 +13,313 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build debug APK
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Create a clean Android project
+        shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          rm -rf app src build.gradle.kts settings.gradle.kts gradle.properties
+          mkdir -p app/src/main/java/com/aiva/assistant app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AIVA"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "com.aiva.assistant"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.aiva.assistant"
+                  minSdk = 23
+                  targetSdk = 32
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.CALL_PHONE" />
+              <uses-permission android:name="android.permission.READ_CONTACTS" />
+              <application
+                  android:allowBackup="false"
+                  android:label="AIVA Assistant"
+                  android:theme="@android:style/Theme.Material.NoActionBar"
+                  android:usesCleartextTraffic="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/aiva/assistant/MainActivity.kt <<'EOF'
+          package com.aiva.assistant
+
+          import android.Manifest
+          import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.os.Bundle
+          import android.speech.RecognizerIntent
+          import android.speech.tts.TextToSpeech
+          import android.view.Gravity
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+
+          class MainActivity : Activity(), TextToSpeech.OnInitListener {
+              private var tts: TextToSpeech? = null
+              private lateinit var status: TextView
+              private val listenRequest = 41
+              private val audioPermissionRequest = 42
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.statusBarColor = android.graphics.Color.rgb(5, 12, 30)
+                  window.navigationBarColor = android.graphics.Color.rgb(5, 12, 30)
+                  tts = TextToSpeech(this, this)
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(28, 36, 28, 28)
+                      setBackgroundColor(android.graphics.Color.rgb(5, 12, 30))
+                  }
+
+                  val title = TextView(this).apply {
+                      text = "A I V A"
+                      textSize = 34f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.rgb(65, 170, 255))
+                  }
+                  root.addView(title, matchWrap())
+
+                  val subtitle = TextView(this).apply {
+                      text = "PERSONAL AI ASSISTANT"
+                      textSize = 12f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.LTGRAY)
+                      setPadding(0, 4, 0, 22)
+                  }
+                  root.addView(subtitle, matchWrap())
+
+                  val greeting = TextView(this).apply {
+                      text = "Good morning, Sir"
+                      textSize = 23f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.WHITE)
+                  }
+                  root.addView(greeting, matchWrap())
+
+                  val clock = TextView(this).apply {
+                      textSize = 16f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.rgb(140, 190, 255))
+                      setPadding(0, 10, 0, 20)
+                      text = SimpleDateFormat("EEEE, dd MMMM  •  hh:mm a", Locale.getDefault()).format(Date())
+                  }
+                  root.addView(clock, matchWrap())
+
+                  status = TextView(this).apply {
+                      text = "I'm ready to help, Sir."
+                      textSize = 15f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.WHITE)
+                      setPadding(8, 8, 8, 24)
+                  }
+                  root.addView(status, matchWrap())
+
+                  addButton(root, "🎙  TALK TO AIVA") { startListening() }
+                  addButton(root, "🕒  TIME AND DATE") {
+                      val now = SimpleDateFormat("EEEE, dd MMMM yyyy, hh:mm a", Locale.getDefault()).format(Date())
+                      respond("Sir, it is $now")
+                  }
+                  addButton(root, "▶  OPEN YOUTUBE") { openAppOrWeb("com.google.android.youtube", "https://www.youtube.com") }
+                  addButton(root, "💬  OPEN WHATSAPP") { openAppOrWeb("com.whatsapp", "https://www.whatsapp.com") }
+                  addButton(root, "📷  OPEN INSTAGRAM") { openAppOrWeb("com.instagram.android", "https://www.instagram.com") }
+                  addButton(root, "🌐  SEARCH THE WEB") {
+                      val intent = Intent(Intent.ACTION_WEB_SEARCH).putExtra("query", "latest news")
+                      try { startActivity(intent) } catch (_: Exception) {
+                          startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com")))
+                      }
+                  }
+
+                  val foot = TextView(this).apply {
+                      text = "VOICE • APPS • TIME • WEB"
+                      textSize = 11f
+                      gravity = Gravity.CENTER
+                      setTextColor(android.graphics.Color.GRAY)
+                      setPadding(0, 20, 0, 0)
+                  }
+                  root.addView(foot, matchWrap())
+
+                  setContentView(root)
+              }
+
+              private fun matchWrap() = LinearLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+              )
+
+              private fun addButton(root: LinearLayout, label: String, action: () -> Unit) {
+                  val button = Button(this).apply {
+                      text = label
+                      textSize = 14f
+                      setTextColor(android.graphics.Color.WHITE)
+                      setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(20, 75, 135)))
+                      setOnClickListener { action() }
+                  }
+                  val params = LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                  )
+                  params.setMargins(0, 5, 0, 5)
+                  root.addView(button, params)
+              }
+
+              private fun startListening() {
+                  if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), audioPermissionRequest)
+                      return
+                  }
+                  val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                      putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                      putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to AIVA")
+                  }
+                  try { startActivityForResult(intent, listenRequest) }
+                  catch (_: Exception) { respond("Sir, voice recognition is not available on this phone.") }
+              }
+
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == listenRequest && resultCode == RESULT_OK) {
+                      val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
+                      status.text = "You said: $spoken"
+                      handleCommand(spoken.lowercase(Locale.getDefault()))
+                  }
+              }
+
+              private fun handleCommand(command: String) {
+                  when {
+                      "time" in command || "date" in command || "समय" in command || "तारीख" in command -> {
+                          respond("Sir, " + SimpleDateFormat("EEEE, dd MMMM yyyy, hh:mm a", Locale.getDefault()).format(Date()))
+                      }
+                      "youtube" in command -> openAppOrWeb("com.google.android.youtube", "https://www.youtube.com")
+                      "whatsapp" in command -> openAppOrWeb("com.whatsapp", "https://www.whatsapp.com")
+                      "instagram" in command -> openAppOrWeb("com.instagram.android", "https://www.instagram.com")
+                      "google" in command || "search" in command || "खोज" in command -> {
+                          val query = command.replace("search", "").replace("google", "").trim()
+                          startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(query.ifBlank { "news" }))))
+                      }
+                      "hello" in command || "hi" in command || "नमस्ते" in command -> respond("Hello, Sir. How can I help you?")
+                      else -> respond("Sir, I heard $command. For now I can help with time, web search, and opening supported apps.")
+                  }
+              }
+
+              private fun openAppOrWeb(packageName: String, url: String) {
+                  val launch = packageManager.getLaunchIntentForPackage(packageName)
+                  try {
+                      if (launch != null) startActivity(launch)
+                      else startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Could not open app", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              private fun respond(message: String) {
+                  status.text = message
+                  tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "AIVA_REPLY")
+              }
+
+              override fun onInit(statusCode: Int) {
+                  if (statusCode == TextToSpeech.SUCCESS) {
+                      tts?.language = Locale.getDefault()
+                      tts?.setSpeechRate(0.95f)
+                  }
+              }
+
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  if (requestCode == audioPermissionRequest && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                      startListening()
+                  } else if (requestCode == audioPermissionRequest) {
+                      Toast.makeText(this, "Microphone permission is needed for voice commands", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              override fun onDestroy() {
+                  tts?.stop()
+                  tts?.shutdown()
+                  super.onDestroy()
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AIVA-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
